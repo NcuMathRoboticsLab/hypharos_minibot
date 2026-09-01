@@ -1,6 +1,7 @@
 #!/usr/bin/python3
 # Copyright 2018 HyphaROS Workshop.
 # Developer: HaoChih, LIN (hypha.ros@gmail.com)
+# Developer: Kuo-Shih Tseng (kuoshih@math.ncu.edu.tw)
 # Developer: An-You Xue (112201017@cc.ncu.edu.tw)
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,7 +15,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-#
+
 # Modifications Copyright 2025 NCU MathmaticRoboticsLab.
 # This file has been modified by An-You Xue in 2025.
 # Changes include:
@@ -32,6 +33,11 @@ from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from mpu6050 import mpu6050
 from sensor_msgs.msg import Imu
+
+
+MAX_N = 500
+f = open('imu_data', 'w')
+
 
 class IMUNode(Node):
     def __init__(self):
@@ -60,31 +66,29 @@ class IMUNode(Node):
             for x in range(0, 50):
                 gyro_data = self.sensor.get_gyro_data()
                 time.sleep(0.01)
-
         except Exception:
-            self.get_logger().info('Can not receive data from the I2C device: '+ self.imu_i2c + 
-            '. Did you specify the correct No. ?')
-            sys.exit(0) 
+            self.get_logerr().info(
+                'Can not receive data from the I2C device: '
+                + self.imu_i2c
+                + '. Did you specify the correct No. ?'
+            )
+            sys.exit(0)
 
         self.get_logger().info('Communication success !')
+        self.seq = 0
 
         # ROS handler
         qos_profile = qos_profile_sensor_data
         qos_profile.depth = 1
-        self.pub = self.create_publisher(
-            Imu,
-            'imu_data',
-            qos_profile
-        )
-        self.timer = self.create_timer(1.0/self.pub_freq, self.timerCB)
+        self.pub = self.create_publisher(Imu, 'imu/data_raw', qos_profile)
+        self.timer = self.create_timer(1.0 / self.pub_freq, self.timerCB)
 
     def timerCB(self):
-        #I2C Serial read & publish 
-        try:           
+        # I2C Serial read & publish
+        try:
             gyro_data = self.sensor.get_gyro_data()
             accel_data = self.sensor.get_accel_data()
 
-            # Publish imu raw data
             imuMsg = Imu()
             imuMsg.header.stamp = self.get_clock().now().to_msg()
             imuMsg.header.frame_id = self.imu_link
@@ -104,26 +108,42 @@ class IMUNode(Node):
             imuMsg.linear_acceleration.y = float(accel_data['y'])
             imuMsg.linear_acceleration.z = float(accel_data['z'])
             self.pub.publish(imuMsg)
+            self.seq += 1
+
+            if self.seq == 1:
+                print('Collecting IMU data')
+            if self.seq <= MAX_N:
+                f.write(str(self.seq) + '\n')
+                f.write(str(gyro_data['x']) + '\n')
+                f.write(str(gyro_data['y']) + '\n')
+                f.write(str(gyro_data['z']) + '\n')
+                f.write(str(accel_data['x']) + '\n')
+                f.write(str(accel_data['y']) + '\n')
+                f.write(str(accel_data['z']) + '\n')
+            if self.seq == MAX_N:
+                print('Collected all IMU data')
+                f.close()
+
         except Exception:
-            self.get_logger().info('Error in sensor value !') 	          
+            self.get_logger().info('Error in sensor value !')
 
 
 def main(args=None):
     try:
         # ROS Init
         rclpy.init(args=args)
-
         # Constract IMUNode Obj
         imu = IMUNode()
         imu.get_logger().info('Start Reading ...')
-
         rclpy.spin(imu)
 
     except KeyboardInterrupt:
         print('Shutting down')
-    
+
     finally:
+        f.close()
         imu.destroy_node()
+
 
 if __name__ == '__main__':
     main()

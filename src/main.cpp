@@ -1,11 +1,13 @@
 /*
  Copyright 2018 NCU MATH.
  Developer: Kuo-Shih Tseng (kuoshih@math.ncu.edu.tw)
+ Developer: An-You Xue (112201017@cc.ncu.edu.tw)
  Description: This code activate a node "main." 
  This node subscribes three topics -- imu_data, odom, and scan. 
  You can access data from three Callback functions.
  $Revision: 1.0 $,  2018.07.24 
- $Revision: 1.1 $,  2018.12.20, add a maker for users 
+ $Revision: 1.1 $,  2018.12.20, add a marker for users 
+ $Revision: 2.0 $,  2025.4.25, chage to ros2 
  
 
  Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,52 +21,63 @@
  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  See the License for the specific language governing permissions and
  limitations under the License.
+
+ 
+ Modifications Copyright 2025 NCU MathmaticRoboticsLab.
+ This file has been modified by An-You Xue in 2025.
+ Changes include:
+ - Migrated to ROS 2 Jazzy
+ - Updated to use rclcpp.h instead of ros.h
+ - Code style adjustments and performance optimizations
+ The original file was developed by Kuo-Shih Tseng (kuoshih@math.ncu.edu.tw)
 */
 
 // %Tag(FULLTEXT)%
-#include "ros/ros.h"
-#include "std_msgs/String.h"
-#include "sensor_msgs/Imu.h"
-#include "nav_msgs/Odometry.h"
-#include "sensor_msgs/LaserScan.h"
-#include <visualization_msgs/Marker.h>
+#include <chrono>
+#include <cmath>
+#include <functional>
+#include <memory>
+
+#include "rclcpp/rclcpp.hpp"
+#include "rclcpp/logger.hpp"
+#include "rclcpp/qos.hpp"
+#include "std_msgs/msg/string.hpp"
+#include "sensor_msgs/msg/imu.hpp"
+#include "sensor_msgs/msg/laser_scan.hpp"
+#include "nav_msgs/msg/odometry.hpp"
+#include "visualization_msgs/msg/marker.hpp"
+
 #define RAD2DEG(x) ((x)*180./M_PI)
 
-void callback1(const ros::TimerEvent&);
-void init_marker(void);
+using namespace std::chrono_literals;
 
-visualization_msgs::Marker marker;
-uint32_t shape = visualization_msgs::Marker::CYLINDER;
-ros::Publisher marker_pub;
-int counter=0;
+visualization_msgs::msg::Marker marker;
+uint32_t shape = visualization_msgs::msg::Marker::CYLINDER;
+rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr marker_pub;
+int counter = 0;
 
-void callback1(const ros::TimerEvent&)
-{// update maker location and publish it. 
-    float x=1*cos(0.174*counter);
-    float y=1*sin(0.174*counter);
+void callback1() {
+    float x = std::cos(0.174f * counter);
+    float y = std::sin(0.174f * counter);
     marker.pose.position.x = x;
     marker.pose.position.y = y;
-    //ROS_INFO("x=%f,y=%f\n",x,y);
-    counter++;
+    ++counter;
 
-    marker_pub.publish(marker);
+    marker_pub->publish(marker);
 }
 
-void odomCallback(const nav_msgs::Odometry::ConstPtr& msg)
-{
-    ROS_INFO("Vel-> Linear: [%f], Angular: [%f]", msg->twist.twist.linear.x,msg->twist.twist.angular.z);
+void odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg) {
+    RCLCPP_INFO(rclcpp::get_logger("minibot_sample"), "Vel-> Linear: [%f], Angular: [%f]", msg->twist.twist.linear.x,msg->twist.twist.angular.z);
 }
-void imuCallback(const sensor_msgs::Imu::ConstPtr& msg)
-{
+
+void imuCallback(const sensor_msgs::msg::Imu::SharedPtr msg) {
     /*
     ROS_INFO("V x: [%f], y: [%f], z: [%f]", msg->linear_acceleration.x,msg->linear_acceleration.y,msg->linear_acceleration.z);
     ROS_INFO("W x: [%f], y: [%f], z: [%f]", msg->angular_velocity.x,msg->angular_velocity.y,msg->angular_velocity.z);
     */
 }
 
-
-void scanCallback(const sensor_msgs::LaserScan::ConstPtr& scan)
-{
+void scanCallback(const sensor_msgs::msg::LaserScan::SharedPtr scan) {
     int count = scan->scan_time / scan->time_increment;
     printf("[YDLIDAR INFO]: I heard a laser scan %s[%d]:\n", scan->header.frame_id.c_str(), count);
     /*
@@ -77,77 +90,14 @@ void scanCallback(const sensor_msgs::LaserScan::ConstPtr& scan)
         {printf("[YDLIDAR INFO]: angle-distance : [%f, %f, %i]\n", degree, scan->ranges[i], i);}
     }
     */
-    
 }
 
-
-int main(int argc, char **argv)
-{
-  /**
-   * The ros::init() function needs to see argc and argv so that it can perform
-   * any ROS arguments and name remapping that were provided at the command line.
-   * For programmatic remappings you can use a different version of init() which takes
-   * remappings directly, but for most command-line programs, passing argc and argv is
-   * the easiest way to do it.  The third argument to init() is the name of the node.
-   *
-   * You must call one of the versions of ros::init() before using any other
-   * part of the ROS system.
-   */
-  ros::init(argc, argv, "listener");
-
-  /**
-   * NodeHandle is the main access point to communications with the ROS system.
-   * The first NodeHandle constructed will fully initialize this node, and the last
-   * NodeHandle destructed will close down the node.
-   */
-  ros::NodeHandle n;
-  //ros::Rate r(1);
-
-  /**
-   * The subscribe() call is how you tell ROS that you want to receive messages
-   * on a given topic.  This invokes a call to the ROS
-   * master node, which keeps a registry of who is publishing and who
-   * is subscribing.  Messages are passed to a callback function, here
-   * called chatterCallback.  subscribe() returns a Subscriber object that you
-   * must hold on to until you want to unsubscribe.  When all copies of the Subscriber
-   * object go out of scope, this callback will automatically be unsubscribed from
-   * this topic.
-   *
-   * The second parameter to the subscribe() function is the size of the message
-   * queue.  If messages are arriving faster than they are being processed, this
-   * is the number of messages that will be buffered up before beginning to throw
-   * away the oldest ones.
-   */ 
-
-  ros::Subscriber sub2 = n.subscribe("/imu_data", 1000, imuCallback);
-  ros::Subscriber sub3 = n.subscribe("/odom", 1000, odomCallback);
-  ros::Subscriber sub4 = n.subscribe<sensor_msgs::LaserScan>("/scan", 1000, scanCallback);
-
-  // create a timer callback
-  ros::Timer timer1 = n.createTimer(ros::Duration(0.1), callback1);
-  // create a topic "visualization_marker"
-  marker_pub = n.advertise<visualization_msgs::Marker>("visualization_marker", 1);
-
-  init_marker();
-
-  /**
-   * ros::spin() will enter a loop, pumping callbacks.  With this version, all
-   * callbacks will be called from within this thread (the main one).  ros::spin()
-   * will exit when Ctrl-C is pressed, or the node is shutdown by the master.
-   */
-
-  ros::spin();
-
-
-  return 0;
-}
-
-void init_marker(void)
-{
-    // Initialize maker's setting.
+void init_marker() {
+    // Initialize marker's setting.
     // Set the frame ID and timestamp.  See the TF tutorials for information on these.
     marker.header.frame_id = "/target";
-    marker.header.stamp = ros::Time::now();
+    rclcpp::Clock clock(RCL_ROS_TIME);
+    marker.header.stamp = clock.now();
 
     // Set the namespace and id for this marker.  This serves to create a unique ID
     // Any marker sent with the same namespace and id will overwrite the old one
@@ -158,10 +108,10 @@ void init_marker(void)
 
     // Set the marker action.  Options are ADD, DELETE, and new in ROS Indigo: 3 (DELETEALL)
     // Tag(ACTION)
-    marker.action = visualization_msgs::Marker::ADD;
+    marker.action = visualization_msgs::msg::Marker::ADD;
 
-    // Set the pose of the marker.  This is a full 6DOF pose relative to the frame/time specified in the header
-    //Tag(POSE)
+    // Set the marker action.  Options are ADD, DELETE, and new in ROS Indigo: 3 (DELETEALL)
+    // Tag(ACTION)
     marker.pose.position.x = 0;
     marker.pose.position.y = 0;
     marker.pose.position.z = 0;
@@ -182,6 +132,39 @@ void init_marker(void)
     marker.color.a = 1.0;
 
     //Tag(LIFETIME)
-    marker.lifetime = ros::Duration();
+    marker.lifetime = rclcpp::Duration(0, 0);
 
+}
+
+int main(int argc, char **argv) {
+    rclcpp::init(argc, argv);
+
+    auto node = rclcpp::Node::make_shared("minibot_sample");
+
+    auto sensor_qos = rclcpp::SensorDataQoS();
+    auto odom_qos = rclcpp::QoS(rclcpp::KeepLast(10));
+    auto marker_qos = rclcpp::QoS(rclcpp::KeepLast(1)).reliable().transient_local();
+
+    auto imu_sub = node->create_subscription<sensor_msgs::msg::Imu>(
+        "/imu_data", sensor_qos, imuCallback);
+
+    auto odom_sub = node->create_subscription<nav_msgs::msg::Odometry>(
+        "/odom", odom_qos, odomCallback);
+
+    auto scan_sub = node->create_subscription<sensor_msgs::msg::LaserScan>(
+        "/scan", sensor_qos, scanCallback);
+
+    auto timer = node->create_wall_timer(
+        100ms, callback1);
+
+    marker_pub = node->create_publisher<visualization_msgs::msg::Marker>(
+        "/visualization_marker", marker_qos);
+
+    init_marker();
+
+    rclcpp::spin(node);
+
+    rclcpp::shutdown();
+
+    return 0;
 }
