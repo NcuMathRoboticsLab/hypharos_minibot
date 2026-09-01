@@ -20,22 +20,22 @@ License: Apache 2.0
 
 
 ## Compile the code
-$ cd catkin_ws/src  
-$ git clone https://github.com/kuoshih/hypharos_minibot   
+$ cd colcon_ws/src  
+$ git clone -b jazzy https://github.com/NcuMathRoboticsLab/hypharos_minibot.git   
 $ cd ..  
-$ catkin_make  
+$ colcon build --symlink-install
 
-Or Download this this code to pi\catkin_ws\src.   
+Or Download this this code to pi\colcon_ws\src.   
 Unzip hypharos_minibot.zip to replace the original code.
   
-$cd catkin_ws  
-$catkin_make  
+$ cd colcon_ws  
+$ colcon build --symlink-install  
 
 ## Run the code   
-$roslaunch hypharos_minibot project_sample.launch
+$ ros2 launch hypharos_minibot project_sample.launch.py
 
 ## rviz
-$rviz  
+$ rviz  
 Press "Add" button in rviz, then select "Marker"  
 Set fixed frame as "target"  
 ![alt text](https://github.com/kuoshih/hypharos_minibot/blob/master/document/target.png)  
