@@ -31,10 +31,10 @@ import rclpy
 import serial
 import tf2_ros
 import tf_transformations
-from geometry_msgs.msg import TransformStamped, Twist
+from geometry_msgs.msg import TransformStamped, TwistStamped
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
-from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy
+from rclpy.qos import QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
 
 
 class BaseControl(Node):
@@ -96,7 +96,7 @@ class BaseControl(Node):
         )
 
         self.sub = self.create_subscription(
-            Twist,
+            TwistStamped,
             '/cmd_vel',
             self.cmdCB,
             self.qos,
@@ -135,9 +135,9 @@ class BaseControl(Node):
         #     else:
         #         self.serial.read(1)
 
-    def cmdCB(self, data: Twist):
-        self.trans_x = data.linear.x
-        self.rotat_z = data.angular.z
+    def cmdCB(self, data: TwistStamped):
+        self.trans_x = data.twist.linear.x
+        self.rotat_z = data.twist.angular.z
 
     def timerOdomCB(self):
         # Serial read & publish
