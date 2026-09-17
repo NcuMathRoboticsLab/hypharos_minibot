@@ -10,7 +10,8 @@ def launch_setup(context, *args, **kwargs):
     wheel_separation = LaunchConfiguration('wheel_separation').perform(context)
     wheel_radius = LaunchConfiguration('wheel_radius').perform(context)
     odom_topic = LaunchConfiguration('odom_topic').perform(context)
-    pub_tf = LaunchConfiguration('pub_tf').perform(context)
+    pub_tf_str = LaunchConfiguration('pub_tf').perform(context)
+    pub_tf_bool = pub_tf_str.lower() == 'true'
 
     base_control_node = Node(
         package='hypharos_minibot',
@@ -23,7 +24,7 @@ def launch_setup(context, *args, **kwargs):
             'base_id': 'base_footprint',
             'odom_id': 'odom',
             'odom_topic': odom_topic,
-            'pub_tf': pub_tf,
+            'pub_tf': pub_tf_bool,
             'wheel_separation': wheel_separation,
             'wheel_radius': wheel_radius,
         }],

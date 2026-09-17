@@ -24,8 +24,9 @@
 # The original file was developed by HaoChih, LIN (hypha.ros@gmail.com)
 
 import math
-import sys
+import threading
 import time
+import sys
 
 import rclpy
 import serial
@@ -52,8 +53,8 @@ class BaseControl(Node):
         self.declare_parameter('vx_cov', '1.0')  # covariance for Vx measurement
         self.declare_parameter('vyaw_cov', '1.0')  # covariance for Vyaw measurement
         self.declare_parameter('odom_topic', '/odom')  # topic name
-        self.declare_parameter('pub_tf', 'True')  # whether publishes TF or not
-        self.declare_parameter('debug_mode', 'False')  # true for detail info
+        self.declare_parameter('pub_tf', True)  # whether publishes TF or not
+        self.declare_parameter('debug_mode', False)  # true for detail info
 
         # Get parameters
         self.baseId = self.get_parameter('base_id').value
@@ -127,19 +128,36 @@ class BaseControl(Node):
         self.pose_y = 0.0
         self.pose_yaw = 0.0
 
-        # reading loop
-        # while True:
-        #     reading = self.serial.read(6)
-        #     if reading[0] == 255 and reading[1] == 254:
-        #         self.data = reading
-        #     else:
-        #         self.serial.read(1)
+        self.data = None
+        # start a background thread to read from serial
+        self.read_thread = threading.Thread(target=self.serial_read_loop)
+        self.read_thread.daemon = True
+        self.read_thread.start()
+
+
+    def serial_read_loop(self):
+        while rclpy.ok():
+            try:
+                if self.serial.in_waiting >= 6:
+                    reading = self.serial.read(6)
+                    # check header
+                    if len(reading) == 6 and reading[0] == 255 and reading[1] == 254:
+                        self.data = reading
+                    else:
+                        self.serial.read(1)
+                else:
+                    time.sleep(0.005)
+            except Exception as e:
+                self.get_logger().error(f'Failed to read serial: {e}')
 
     def cmdCB(self, data: TwistStamped):
         self.trans_x = data.twist.linear.x
         self.rotat_z = data.twist.angular.z
 
     def timerOdomCB(self):
+        if self.data is None:
+            return
+
         # Serial read & publish
         try:
             data = self.data
@@ -168,7 +186,7 @@ class BaseControl(Node):
 
             # Pose
             self.current_time = self.get_clock().now()
-            dt = (self.current_time - self.previous_time).to_sec()
+            dt = (self.current_time - self.previous_time).nanoseconds / 1e9  # ns -> sec
             self.previous_time = self.current_time
             self.pose_x = self.pose_x + Vx * math.cos(self.pose_yaw) * dt
             self.pose_y = self.pose_y + Vx * math.sin(self.pose_yaw) * dt
@@ -177,7 +195,7 @@ class BaseControl(Node):
 
             # Publish Odometry
             msg = Odometry()
-            msg.header.stamp = self.current_time
+            msg.header.stamp = self.current_time.to_msg()
             msg.header.frame_id = self.odomId
             msg.child_frame_id = self.baseId
             msg.pose.pose.position.x = self.pose_x
@@ -199,7 +217,7 @@ class BaseControl(Node):
             # TF Broadcaster
             if self.pub_tf:
                 t = TransformStamped()
-                t.header.stamp = self.current_time
+                t.header.stamp = self.current_time.to_msg()
                 t.header.frame_id = self.odomId
                 t.child_frame_id = self.baseId
                 t.transform.translation.x = self.pose_x
@@ -213,21 +231,18 @@ class BaseControl(Node):
                 self.tf_broadcaster.sendTransform(t)
 
             # Debug mode
-            if self.debug_mode:
-                if len(data) == 6:
-                    header_1 = data[0]
-                    header_2 = data[1]
-                    tx_1 = data[2]
-                    tx_2 = data[3]
-                    tx_3 = data[4]
-                    tx_4 = data[5]
-                    self.get_logger().info(
-                        f'[Debug] header_1:{header_1}, header_2:{header_2}, tx_1:{tx_1}, tx_2:{tx_2}, tx_3:{tx_3}, tx_4:{tx_4}'
-                    )
+            if self.debug_mode and len(data) == 6:
+                header_1 = data[0]
+                header_2 = data[1]
+                tx_1 = data[2]
+                tx_2 = data[3]
+                tx_3 = data[4]
+                tx_4 = data[5]
+                self.get_logger().info(f'[Debug] header_1:{header_1}, header_2:{header_2}, tx_1:{tx_1}, tx_2:{tx_2}, tx_3:{tx_3}, tx_4:{tx_4}')
 
-        except Exception:
-            # self.get_logger().info("Error in sensor value !")
-            pass
+        except Exception as e:
+            self.get_logger().info(f'Error in sensor value: {e}')
+            # pass
 
     def timerCmdCB(self):
         # send cmd to motor
@@ -243,10 +258,8 @@ class BaseControl(Node):
         if self.WL_send < 0:
             L_forward = 0
             self.WL_send = -self.WL_send
-        if self.WR_send > 255:
-            self.WR_send = 255
-        if self.WL_send > 255:
-            self.WL_send = 255
+        self.WR_send = min(self.WR_send, 255)
+        self.WL_send = min(self.WL_send, 255)
 
         output = [255, 254, self.WL_send, L_forward, self.WR_send, R_forward]
         # print output
@@ -254,6 +267,7 @@ class BaseControl(Node):
 
 
 def main(args=None):
+    node = None
     try:
         rclpy.init(args=args)
         node = BaseControl()
