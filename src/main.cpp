@@ -24,7 +24,7 @@
 
  
  Modifications Copyright 2025 NCU MathmaticRoboticsLab.
- This file has been modified by An-You Xue in 2025.
+ This file has been modified by An-You Xue in 2026.
  Changes include:
  - Migrated to ROS 2 Jazzy
  - Updated to use rclcpp.h instead of ros.h
@@ -67,20 +67,41 @@ void callback1() {
 }
 
 void odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg) {
-    RCLCPP_INFO(rclcpp::get_logger("minibot_sample"), "Vel-> Linear: [%f], Angular: [%f]", msg->twist.twist.linear.x,msg->twist.twist.angular.z);
+    RCLCPP_INFO(
+        rclcpp::get_logger("minibot_sample"), 
+        "Vel-> Linear: [%f], Angular: [%f]", 
+        msg->twist.twist.linear.x,msg->twist.twist.angular.z
+    );
 }
 
 void imuCallback(const sensor_msgs::msg::Imu::SharedPtr msg) {
     /*
-    ROS_INFO("V x: [%f], y: [%f], z: [%f]", msg->linear_acceleration.x,msg->linear_acceleration.y,msg->linear_acceleration.z);
-    ROS_INFO("W x: [%f], y: [%f], z: [%f]", msg->angular_velocity.x,msg->angular_velocity.y,msg->angular_velocity.z);
+    RCLCPP_INFO(
+        rclcpp::get_logger("minibot_sample"), 
+        "V x: [%f], y: [%f], z: [%f]", 
+        msg->linear_acceleration.x, 
+        msg->linear_acceleration.y, 
+        msg->linear_acceleration.z
+    );
+    RCLCPP_INFO(
+        rclcpp::get_logger("minibot_sample"), 
+        "W x: [%f], y: [%f], z: [%f]", 
+        msg->angular_velocity.x, 
+        msg->angular_velocity.y, 
+        msg->angular_velocity.z
+    );
     */
 }
 
 void scanCallback(const sensor_msgs::msg::LaserScan::SharedPtr scan) {
+    RCLCPP_INFO(
+        rclcpp::get_logger("minibot_sample"), 
+        "I heard a laser scan %s[%zu]", 
+        scan->header.frame_id.c_str(), scan->ranges.size()
+    );
+    /*
     int count = scan->scan_time / scan->time_increment;
     printf("[YDLIDAR INFO]: I heard a laser scan %s[%d]:\n", scan->header.frame_id.c_str(), count);
-    /*
     printf("[YDLIDAR INFO]: angle_range : [%f, %f]\n", RAD2DEG(scan->angle_min), RAD2DEG(scan->angle_max));
  
     for(int i = 0; i < count; i++) 

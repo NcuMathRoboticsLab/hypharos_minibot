@@ -16,7 +16,7 @@
 # limitations under the License.
 #
 # Modifications Copyright 2025 NCU MathmaticRoboticsLab.
-# This file has been modified by An-You Xue in 2025.
+# This file has been modified by An-You Xue in 2026.
 # Changes include:
 # - Migrated to ROS 2 Jazzy
 # - Updated to use rclpy instead of rospy
@@ -47,47 +47,53 @@ class BaseControl(Node):
         self.declare_parameter('odom_id', 'odom')  # odom link
         self.declare_parameter('port', '/dev/stm32base')  # device port
         self.declare_parameter('baudrate', 115200)  # baudrate
-        self.declare_parameter('odom_freq', '50.0')  # hz of odom pub
-        self.declare_parameter('wheel_separation', '0.158')  # unit: meter
-        self.declare_parameter('wheel_radius', '0.032')  # unit: meter
-        self.declare_parameter('vx_cov', '1.0')  # covariance for Vx measurement
-        self.declare_parameter('vyaw_cov', '1.0')  # covariance for Vyaw measurement
+        self.declare_parameter('odom_freq', 50.0)  # hz of odom pub
+        self.declare_parameter('wheel_separation', 0.158)  # unit: meter
+        self.declare_parameter('wheel_radius', 0.032)  # unit: meter
+        self.declare_parameter('vx_cov', 1.0)  # covariance for Vx measurement
+        self.declare_parameter('vyaw_cov', 1.0)  # covariance for Vyaw measurement
         self.declare_parameter('odom_topic', '/odom')  # topic name
         self.declare_parameter('pub_tf', True)  # whether publishes TF or not
         self.declare_parameter('debug_mode', False)  # true for detail info
 
         # Get parameters
-        self.baseId = self.get_parameter('base_id').value
-        self.odomId = self.get_parameter('odom_id').value
-        self.device_port = self.get_parameter('port').value
-        self.baudrate = self.get_parameter('baudrate').value
+        self.baseId = str(self.get_parameter('base_id').value)
+        self.odomId = str(self.get_parameter('odom_id').value)
+        self.device_port = str(self.get_parameter('port').value)
+        self.baudrate = int(self.get_parameter('baudrate').value)
         self.odom_freq = float(self.get_parameter('odom_freq').value)
         self.wheelSep = float(self.get_parameter('wheel_separation').value)
         self.wheelRad = float(self.get_parameter('wheel_radius').value)
         self.VxCov = float(self.get_parameter('vx_cov').value)
         self.VyawCov = float(self.get_parameter('vyaw_cov').value)
-        self.odom_topic = self.get_parameter('odom_topic').value
+        self.odom_topic = str(self.get_parameter('odom_topic').value)
         self.pub_tf = bool(self.get_parameter('pub_tf').value)
         self.debug_mode = bool(self.get_parameter('debug_mode').value)
 
         # Serial Communication
+        self.serial = None
+        self.serial_lock = threading.Lock()
         try:
-            self.serial = serial.Serial(self.device_port, self.baudrate, timeout=10)
-            self.get_logger().info('Flusing first 50 data readings ...')
-            for x in range(0, 50):
-                data = self.serial.read()
-                time.sleep(0.01)
-
-        except serial.serialutil.SerialException:
-            self.get_logger().info(
-                'Can not receive data from the port: '
-                + self.device_port
-                + '. Did you specify the correct port ?'
+            self.serial = serial.Serial(
+                self.device_port,
+                self.baudrate,
+                timeout=0.1,
+                write_timeout=0.1,
             )
-            self.serial.close
-            sys.exit(0)
+            self.serial.reset_input_buffer()
+            self.serial.reset_output_buffer()
+        except serial.serialutil.SerialException as e:
+            self.get_logger().error(
+                f'Can not open serial port {self.device_port}: {e}. '
+                'Did you specify the correct port and permissions?'
+            )
+            if self.serial is not None and self.serial.is_open:
+                self.serial.close()
+            sys.exit(1)
 
-        self.get_logger().info('Communication success !')
+        self.get_logger().info(
+            f'Serial connected on {self.device_port} @ {self.baudrate} bps'
+        )
 
         # ROS handler
         self.qos = QoSProfile(
@@ -118,10 +124,10 @@ class BaseControl(Node):
         self.tf_broadcaster = tf2_ros.TransformBroadcaster(self)
 
         # variables
-        self.trans_x = 0.0  # cmd
-        self.rotat_z = 0.0
-        self.WL_send = 0.0
-        self.WR_send = 0.0
+        self.trans_x = 0.0  # cmd (m/s)
+        self.rotat_z = 0.0  # cmd (rad/s)
+        self.WL_send = 0
+        self.WR_send = 0
         self.current_time = self.get_clock().now()
         self.previous_time = self.get_clock().now()
         self.pose_x = 0.0  # SI
@@ -129,26 +135,40 @@ class BaseControl(Node):
         self.pose_yaw = 0.0
 
         self.data = None
+        self.running = True
         # start a background thread to read from serial
-        self.read_thread = threading.Thread(target=self.serial_read_loop)
-        self.read_thread.daemon = True
+        self.read_thread = threading.Thread(target=self.serial_read_loop, daemon=True)
         self.read_thread.start()
 
-
     def serial_read_loop(self):
-        while rclpy.ok():
+        rx_buf = bytearray()
+        while rclpy.ok() and self.running:
             try:
-                if self.serial.in_waiting >= 6:
-                    reading = self.serial.read(6)
-                    # check header
-                    if len(reading) == 6 and reading[0] == 255 and reading[1] == 254:
-                        self.data = reading
-                    else:
-                        self.serial.read(1)
+                waiting = self.serial.in_waiting
+                if waiting > 0:
+                    rx_buf.extend(self.serial.read(waiting))
+                    # Keep only the latest packets if buffer grows too large
+                    if len(rx_buf) > 60:
+                        rx_buf = rx_buf[-60:]
+                    # Find the latest valid 6-byte frame: [0xff, 0xfe, b0, b1, b2, b3]
+                    while len(rx_buf) >= 6:
+                        idx = rx_buf.find(b'\xff\xfe')
+                        if idx == -1:
+                            # Keep last byte in case it is 0xff
+                            rx_buf = rx_buf[-1:] if rx_buf[-1] == 0xFF else bytearray()
+                            break
+                        if idx > 0:
+                            del rx_buf[:idx]
+                        if len(rx_buf) < 6:
+                            break
+                        self.data = bytes(rx_buf[:6])
+                        del rx_buf[:6]
                 else:
                     time.sleep(0.005)
             except Exception as e:
-                self.get_logger().error(f'Failed to read serial: {e}')
+                if self.running:
+                    self.get_logger().error(f'Failed to read serial: {e}')
+                time.sleep(0.05)
 
     def cmdCB(self, data: TwistStamped):
         self.trans_x = data.twist.linear.x
@@ -163,7 +183,7 @@ class BaseControl(Node):
             data = self.data
 
             # Normal mode
-            if len(data) == 6:
+            if len(data) == 6 and data[0] == 255 and data[1] == 254:
                 WL = float(
                     (data[2] * 256 + data[3] - 500) * 100.0 / 1560.0 * 2 * math.pi
                 )  # unit: rad/sec
@@ -171,12 +191,10 @@ class BaseControl(Node):
                     (data[4] * 256 + data[5] - 500) * 100.0 / 1560.0 * 2 * math.pi
                 )
             else:
-                print(
-                    'Error Value! header1: '
-                    + str(data[0])
-                    + ', header2: '
-                    + str(data[1])
+                self.get_logger().warn(
+                    f'Error Value! header1: {data[0]}, header2: {data[1]}'
                 )
+                return
 
             # Twist
             VL = WL * self.wheelRad  # V = omega * radius, unit: m/s
@@ -208,10 +226,10 @@ class BaseControl(Node):
             msg.twist.twist.linear.x = Vx
             msg.twist.twist.angular.z = Vyaw
             for i in range(36):
-                msg.twist.covariance[i] = 0
+                msg.twist.covariance[i] = 0.0
             msg.twist.covariance[0] = self.VxCov
             msg.twist.covariance[35] = self.VyawCov
-            msg.pose.covariance = msg.twist.covariance
+            msg.pose.covariance = msg.twist.covariance.copy()
             self.pub.publish(msg)
 
             # TF Broadcaster
@@ -238,18 +256,40 @@ class BaseControl(Node):
                 tx_2 = data[3]
                 tx_3 = data[4]
                 tx_4 = data[5]
-                self.get_logger().info(f'[Debug] header_1:{header_1}, header_2:{header_2}, tx_1:{tx_1}, tx_2:{tx_2}, tx_3:{tx_3}, tx_4:{tx_4}')
+                self.get_logger().info(
+                    f'[Debug] RX header_1:{header_1}, header_2:{header_2}, '
+                    f'tx_1:{tx_1}, tx_2:{tx_2}, tx_3:{tx_3}, tx_4:{tx_4}'
+                )
 
         except Exception as e:
-            self.get_logger().info(f'Error in sensor value: {e}')
-            # pass
+            self.get_logger().error(f'Error in sensor value: {e}')
+
+    def send_motor_packet(self, wl_val: int, l_dir: int, wr_val: int, r_dir: int):
+        if self.serial is None or not self.serial.is_open:
+            return
+        packet = bytes([
+            0xFF,
+            0xFE,
+            max(0, min(int(wl_val), 255)),
+            1 if l_dir else 0,
+            max(0, min(int(wr_val), 255)),
+            1 if r_dir else 0,
+        ])
+        try:
+            with self.serial_lock:
+                self.serial.write(packet)
+        except Exception as e:
+            self.get_logger().error(f'Failed to write serial: {e}')
+
+    def stop_motors(self):
+        self.send_motor_packet(0, 1, 0, 1)
 
     def timerCmdCB(self):
         # send cmd to motor
         WR = (self.trans_x + self.wheelSep / 2.0 * self.rotat_z) / self.wheelRad  # unit: rad/sec
         WL = (self.trans_x - self.wheelSep / 2.0 * self.rotat_z) / self.wheelRad
-        self.WR_send = int(WR / 100.0 * 1560.0 / 2 / math.pi)
-        self.WL_send = int(WL / 100.0 * 1560.0 / 2 / math.pi)
+        self.WR_send = int(round(WR / 100.0 * 1560.0 / (2.0 * math.pi)))
+        self.WL_send = int(round(WL / 100.0 * 1560.0 / (2.0 * math.pi)))
         R_forward = 1  # 0: reverse, >0: forward
         L_forward = 1  # 0: reverse, >0: forward
         if self.WR_send < 0:
@@ -261,9 +301,18 @@ class BaseControl(Node):
         self.WR_send = min(self.WR_send, 255)
         self.WL_send = min(self.WL_send, 255)
 
-        output = [255, 254, self.WL_send, L_forward, self.WR_send, R_forward]
-        # print output
-        self.serial.write(output)
+        self.send_motor_packet(self.WL_send, L_forward, self.WR_send, R_forward)
+        if self.debug_mode:
+            self.get_logger().info(
+                f'[Debug] TX WL:{self.WL_send} (dir:{L_forward}), '
+                f'WR:{self.WR_send} (dir:{R_forward})'
+            )
+
+    def close(self):
+        self.running = False
+        if self.serial is not None and self.serial.is_open:
+            self.stop_motors()
+            self.serial.close()
 
 
 def main(args=None):
@@ -275,13 +324,15 @@ def main(args=None):
         rclpy.spin(node)
 
     except KeyboardInterrupt:
-        node.serial.close()
+        pass
 
     finally:
         print('Shutting down')
-        if node and node is not None:
-            node.serial.close()
+        if node is not None:
+            node.close()
             node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == '__main__':
